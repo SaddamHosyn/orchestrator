@@ -1,0 +1,142 @@
+services:
+  # PostgreSQL Inventory Database
+  inventory-database:
+    build:
+      context: ./srcs/inventory-database
+    image: inventory-database:1.0.0
+    container_name: inventory-database
+    restart: on-failure
+    environment:
+      INVENTORY_DB_USER: ${INVENTORY_DB_USER}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME}
+    volumes:
+      - inventory-database:/var/lib/postgresql/13/main
+    networks:
+      - microservices-net
+
+  # PostgreSQL Billing Database
+  billing-database:
+    build:
+      context: ./srcs/billing-database
+    image: billing-database:1.0.0
+    container_name: billing-database
+    restart: on-failure
+    environment:
+      BILLING_DB_USER: ${BILLING_DB_USER}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD}
+      BILLING_DB_NAME: ${BILLING_DB_NAME}
+    volumes:
+      - billing-database:/var/lib/postgresql/13/main
+    networks:
+      - microservices-net
+
+  # RabbitMQ Message Queue
+  RabbitMQ:
+    build:
+      context: ./srcs/rabbitmq-service
+    image: rabbitmq-service:1.0.0
+    container_name: RabbitMQ
+    restart: on-failure
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+    networks:
+      - microservices-net
+    expose:
+      - "5672"
+      - "15672"
+
+  # Inventory Service
+  inventory-app:
+    build:
+      context: ./srcs/inventory-app
+    image: inventory-app:1.0.0
+    container_name: inventory-app
+    restart: on-failure
+    environment:
+      INVENTORY_DB_USER: ${INVENTORY_DB_USER}
+      INVENTORY_DB_PASSWORD: ${INVENTORY_DB_PASSWORD}
+      INVENTORY_DB_HOST: inventory-database
+      INVENTORY_DB_PORT: ${INVENTORY_DB_PORT}
+      INVENTORY_DB_NAME: ${INVENTORY_DB_NAME}
+      INVENTORY_PORT: ${INVENTORY_PORT}
+    depends_on:
+      - inventory-database
+    networks:
+      - microservices-net
+    expose:
+      - "8080"
+
+  # Billing Service
+  billing-app:
+    build:
+      context: ./srcs/billing-app
+    image: billing-app:1.0.0
+    container_name: billing-app
+    restart: on-failure
+    environment:
+      BILLING_DB_USER: ${BILLING_DB_USER}
+      BILLING_DB_PASSWORD: ${BILLING_DB_PASSWORD}
+      BILLING_DB_HOST: billing-database
+      BILLING_DB_PORT: ${BILLING_DB_PORT}
+      BILLING_DB_NAME: ${BILLING_DB_NAME}
+      BILLING_PORT: ${BILLING_PORT}
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_HOST: RabbitMQ
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+    depends_on:
+      - billing-database
+      - RabbitMQ
+    networks:
+      - microservices-net
+    expose:
+      - "8080"
+
+  # API Gateway
+  api-gateway-app:
+    build:
+      context: ./srcs/api-gateway-app
+    image: api-gateway-app:1.0.0
+    container_name: api-gateway-app
+    restart: on-failure
+    environment:
+      INVENTORY_IP: inventory-app
+      INVENTORY_PORT: ${INVENTORY_PORT}
+      INVENTORY_ENDPOINT: http://inventory-app:8080
+      BILLING_ENDPOINT: http://billing-app:8080
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_HOST: RabbitMQ
+      RABBITMQ_PORT: ${RABBITMQ_PORT}
+      RABBITMQ_QUEUE: ${RABBITMQ_QUEUE}
+      GATEWAY_PORT: ${GATEWAY_PORT}
+    depends_on:
+      - inventory-app
+      - billing-app
+      - RabbitMQ
+    ports:
+      - "3000:3000"
+    volumes:
+      - api-gateway-volume:/var/logs/api-gateway
+    networks:
+      - microservices-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+# Named volumes
+volumes:
+  inventory-database:
+  billing-database:
+  api-gateway-volume:
+
+# Custom network
+networks:
+  microservices-net:
+    driver: bridge

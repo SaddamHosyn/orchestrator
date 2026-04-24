@@ -1,0 +1,23 @@
+# Secrets and Environment
+.env*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.venv/
+env/
+venv/
+
+
+
+# OS
+
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
