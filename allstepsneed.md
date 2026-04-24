@@ -636,3 +636,37 @@ Without `resources.requests.cpu` defined, the HPA has nothing to measure against
   Deploy a simple logging stack so you can see application logs visually
   The standard choice is Grafana + Loki — lightweight and works well on K3s
   This directly demonstrates observability skills which are highly valued in real DevOps roles
+
+---
+
+REMEBER THIS:
+
+---
+
+## Pods Running on Worker Node
+
+| Component          | Pods                                       | Type        |
+| ------------------ | ------------------------------------------ | ----------- |
+| api-gateway        | 3 pods (shown as app, app, app with `...`) | Deployment  |
+| inventory-app      | 3 pods (shown as app, app, app with `...`) | Deployment  |
+| billing-app        | 1 pod                                      | StatefulSet |
+| rabbitmq           | 1 pod                                      | Deployment  |
+| inventory-database | 1 pod                                      | StatefulSet |
+| billing-database   | 1 pod                                      | StatefulSet |
+
+---
+
+## Total = minimum 10 pods
+
+But the `...` on api-gateway and inventory-app means **these can scale up automatically via HPA**. The `...` is showing that more pods can be added when CPU hits 60%.
+
+---
+
+## The ones with fixed 1 pod
+
+- **billing-app** — 1 fixed, no scaling
+- **rabbitmq** — 1 fixed, no scaling
+- **inventory-database** — 1 fixed, no scaling
+- **billing-database** — 1 fixed, no scaling
+
+These never scale because databases and queue consumers need stable identity, not multiple copies.
