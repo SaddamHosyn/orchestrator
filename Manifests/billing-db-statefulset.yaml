@@ -1,0 +1,75 @@
+---
+# Billing Database StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: billing-database
+  namespace: default
+spec:
+  serviceName: "billing-database"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing-database
+  template:
+    metadata:
+      labels:
+        app: billing-database
+    spec:
+      containers:
+        - name: billing-database
+          image: hussainsaddam/billing-database:1.0
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: billing-db-data
+              mountPath: /var/lib/postgresql/data
+              subPath: postgres
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+  volumeClaimTemplates:
+    - metadata:
+        name: billing-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+# Headless Service for Billing Database StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-database
+  namespace: default
+spec:
+  clusterIP: None # Headless service for StatefulSet
+  selector:
+    app: billing-database
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP

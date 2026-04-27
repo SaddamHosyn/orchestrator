@@ -1,0 +1,99 @@
+---
+# Billing App StatefulSet
+# Note: This is a stateful app that connects to billing-database and RabbitMQ
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: billing-app
+  namespace: default
+spec:
+  serviceName: "billing-app"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: billing-app
+  template:
+    metadata:
+      labels:
+        app: billing-app
+    spec:
+      containers:
+        - name: billing-app
+          # Replace with your actual Docker Hub image
+          image: hussainsaddam/billing-app:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: BILLING_DB_HOST
+              value: "billing-database"
+            - name: BILLING_DB_PORT
+              value: "5432"
+            - name: BILLING_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_DB
+            - name: BILLING_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_USER
+            - name: BILLING_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: billing-db-secret
+                  key: POSTGRES_PASSWORD
+            - name: RABBITMQ_HOST
+              value: "rabbitmq"
+            - name: RABBITMQ_PORT
+              value: "5672"
+            - name: RABBITMQ_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_DEFAULT_USER
+            - name: RABBITMQ_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_DEFAULT_PASS
+            - name: RABBITMQ_QUEUE
+              value: "billing_queue"
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+---
+# Service for Billing App StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: billing-app
+  namespace: default
+spec:
+  clusterIP: None # Headless service for StatefulSet
+  selector:
+    app: billing-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http

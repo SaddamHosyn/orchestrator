@@ -1,0 +1,75 @@
+---
+# Inventory Database StatefulSet
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: inventory-database
+  namespace: default
+spec:
+  serviceName: "inventory-database"
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-database
+  template:
+    metadata:
+      labels:
+        app: inventory-database
+    spec:
+      containers:
+        - name: inventory-database
+          image: hussainsaddam/inventory-database:1.0
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_DB
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_PASSWORD
+          volumeMounts:
+            - name: inventory-db-data
+              mountPath: /var/lib/postgresql/data
+              subPath: postgres
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+  volumeClaimTemplates:
+    - metadata:
+        name: inventory-db-data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+---
+# Headless Service for Inventory Database StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-database
+  namespace: default
+spec:
+  clusterIP: None # Headless service for StatefulSet
+  selector:
+    app: inventory-database
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP

@@ -1,0 +1,81 @@
+---
+# Inventory App Deployment (Stateless, scalable)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inventory-app
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inventory-app
+  template:
+    metadata:
+      labels:
+        app: inventory-app
+    spec:
+      containers:
+        - name: inventory-app
+          # Replace with your actual Docker Hub image
+          image: hussainsaddam/inventory-app:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: INVENTORY_DB_HOST
+              value: "inventory-database"
+            - name: INVENTORY_DB_PORT
+              value: "5432"
+            - name: INVENTORY_DB_NAME
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_DB
+            - name: INVENTORY_DB_USER
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_USER
+            - name: INVENTORY_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: inventory-db-secret
+                  key: POSTGRES_PASSWORD
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+---
+# Service for Inventory App
+apiVersion: v1
+kind: Service
+metadata:
+  name: inventory-app
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: inventory-app
+  ports:
+    - port: 8080
+      targetPort: 8080
+      protocol: TCP
+      name: http

@@ -454,3 +454,15 @@ But the `...` on api-gateway and inventory-app means **these can scale up automa
 - **billing-database** — 1 fixed, no scaling
 
 These never scale because databases and queue consumers need stable identity, not multiple copies.
+
+---
+
+Controller Manager
+
+The kube-controller-manager runs many controllers such as:
+
+Deployment Controller → ensures desired ReplicaSets/Pods exist
+ReplicaSet Controller → ensures correct number of Pods
+StatefulSet Controller → maintains ordered Pods
+Node Controller → monitors nodes
+Job Controller → ensures jobs complete

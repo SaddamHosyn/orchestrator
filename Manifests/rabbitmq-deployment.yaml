@@ -1,0 +1,82 @@
+---
+# RabbitMQ Deployment (Stateless message broker)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: rabbitmq
+  template:
+    metadata:
+      labels:
+        app: rabbitmq
+    spec:
+      containers:
+        - name: rabbitmq
+          # Replace with your actual Docker Hub image
+          image: hussainsaddam/rabbitmq:1.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 5672
+              name: amqp
+            - containerPort: 15672
+              name: management
+          env:
+            - name: RABBITMQ_DEFAULT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_DEFAULT_USER
+            - name: RABBITMQ_DEFAULT_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_DEFAULT_PASS
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - rabbitmq-diagnostics -q ping
+            initialDelaySeconds: 60
+            periodSeconds: 30
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - rabbitmq-diagnostics -q ping
+            initialDelaySeconds: 20
+            periodSeconds: 10
+
+---
+# Service for RabbitMQ
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  namespace: default
+spec:
+  type: ClusterIP
+  selector:
+    app: rabbitmq
+  ports:
+    - port: 5672
+      targetPort: 5672
+      protocol: TCP
+      name: amqp
+    - port: 15672
+      targetPort: 15672
+      protocol: TCP
+      name: management
