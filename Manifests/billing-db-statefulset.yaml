@@ -40,7 +40,7 @@ spec:
                   key: POSTGRES_PASSWORD
           volumeMounts:
             - name: billing-db-data
-              mountPath: /var/lib/postgresql/data
+              mountPath: /var/lib/postgresql/13/main
               subPath: postgres
           resources:
             requests:

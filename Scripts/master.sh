@@ -19,7 +19,8 @@ curl -sfL https://get.k3s.io | sh -s - \
   --disable traefik \
   --tls-san 192.168.56.10 \
   --advertise-address 192.168.56.10 \
-  --node-ip 192.168.56.10
+  --node-ip 192.168.56.10 \
+  --flannel-iface=enp0s8
 
 # Wait for K3s to be ready
 echo "Waiting for K3s server to be ready..."

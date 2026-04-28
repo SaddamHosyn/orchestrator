@@ -56,4 +56,32 @@ fi
 
 # Step 7: Start PostgreSQL server in foreground
 echo "🚀 Starting PostgreSQL server on port 5432..."
-exec runuser -u postgres -- $PG_BIN/postgres -D "$DATA_DIR"
+
+# Start server in background for initialization
+runuser -u postgres -- $PG_BIN/postgres -D "$DATA_DIR" -F &
+SERVER_PID=$!
+
+# Wait for server to be ready
+echo "⏳ Waiting for PostgreSQL to be ready..."
+sleep 5
+
+# Step 8: Initialize database and roles (from environment variables)
+echo "🗄️  Initializing database and roles..."
+PSQL="$PG_BIN/psql -h localhost -U postgres -w"
+
+# Extract database info from environment
+DB_NAME=${POSTGRES_DB:-billing}
+DB_USER=${POSTGRES_USER:-billing_user}
+DB_PASSWORD=${POSTGRES_PASSWORD:-billing_password}
+
+# Create role if not exists
+$PSQL <<-EOSQL
+  CREATE ROLE $DB_USER WITH ENCRYPTED PASSWORD '$DB_PASSWORD' LOGIN;
+  ALTER ROLE $DB_USER CREATEDB;
+  CREATE DATABASE $DB_NAME OWNER $DB_USER;
+EOSQL
+
+echo "✅ Database and roles initialized"
+
+# Keep running
+wait $SERVER_PID

@@ -65,9 +65,12 @@ create_cluster() {
 start_cluster() {
     log_info "Starting K3s cluster..."
     
-    # Resume VMs
+    # Start/resume VMs.
+    # NOTE: `vagrant resume` cannot update port forwarding rules, which can
+    # fail when host SSH ports collide. `vagrant up --no-provision` is safe
+    # for both "already running" and "suspended" states and allows auto-correct.
     cd "$SCRIPT_DIR"
-    vagrant resume
+    vagrant up --no-provision
     
     log_info "Waiting for cluster to be ready..."
     sleep 10

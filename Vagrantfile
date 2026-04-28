@@ -12,6 +12,8 @@ Vagrant.configure("2") do |config|
   # ============================================================
   config.vm.define "master" do |master|
     master.vm.hostname = "master"
+    # Avoid host SSH port collisions (common when multiple Vagrant projects run)
+    master.vm.network "forwarded_port", guest: 22, host: 2223, auto_correct: true, id: "ssh"
     master.vm.network "private_network", ip: "192.168.56.10"
     master.vm.provider "virtualbox" do |vb|
       vb.memory = "2048"
@@ -25,6 +27,8 @@ Vagrant.configure("2") do |config|
   # ============================================================
   config.vm.define "agent" do |agent|
     agent.vm.hostname = "agent"
+    # Avoid host SSH port collisions; allow auto-correct if needed
+    agent.vm.network "forwarded_port", guest: 22, host: 2200, auto_correct: true, id: "ssh"
     agent.vm.network "private_network", ip: "192.168.56.11"
     agent.vm.provider "virtualbox" do |vb|
       vb.memory = "2048"

@@ -34,7 +34,8 @@ echo "K3s token retrieved: ${K3S_TOKEN:0:20}..."
 # Install K3s agent (worker)
 echo "Installing K3s agent..."
 curl -sfL https://get.k3s.io | K3S_URL=https://192.168.56.10:6443 K3S_TOKEN="${K3S_TOKEN}" sh -s - \
-  --node-ip 192.168.56.11
+  --node-ip 192.168.56.11 \
+  --flannel-iface=enp0s8
 
 echo "=========================================="
 echo "K3s Worker Node Setup Complete"

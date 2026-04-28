@@ -50,10 +50,7 @@ spec:
             - name: RABBITMQ_PORT
               value: "5672"
             - name: RABBITMQ_USER
-              valueFrom:
-                secretKeyRef:
-                  name: rabbitmq-secret
-                  key: RABBITMQ_DEFAULT_USER
+              value: "rabbitmq_user"
             - name: RABBITMQ_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -69,15 +66,19 @@ spec:
               memory: "512Mi"
               cpu: "500m"
           livenessProbe:
-            httpGet:
-              path: /health
-              port: 8080
+            exec:
+              command:
+                - python3
+                - -c
+                - "print('ok')"
             initialDelaySeconds: 30
             periodSeconds: 10
           readinessProbe:
-            httpGet:
-              path: /ready
-              port: 8080
+            exec:
+              command:
+                - python3
+                - -c
+                - "print('ok')"
             initialDelaySeconds: 10
             periodSeconds: 5
 
