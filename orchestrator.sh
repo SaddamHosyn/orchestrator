@@ -27,6 +27,46 @@ log_warning() {
     echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
+# Function to deploy all K8s manifests in correct dependency order
+deploy_manifests() {
+    log_info "Deploying manifests..."
+
+    if [ ! -d "$MANIFESTS_DIR" ]; then
+        log_error "Manifests directory not found at $MANIFESTS_DIR"
+        exit 1
+    fi
+
+    # Apply secrets first
+    kubectl apply -f "$MANIFESTS_DIR/secrets.yaml"
+
+    # Wait a bit for secrets to be created
+    sleep 2
+
+    # Apply database manifests
+    kubectl apply -f "$MANIFESTS_DIR/inventory-db-statefulset.yaml"
+    kubectl apply -f "$MANIFESTS_DIR/billing-db-statefulset.yaml"
+
+    # Wait for databases to initialize
+    log_info "Waiting for databases to be ready..."
+    sleep 5
+
+    # Apply RabbitMQ
+    kubectl apply -f "$MANIFESTS_DIR/rabbitmq-deployment.yaml"
+
+    # Wait for RabbitMQ
+    sleep 3
+
+    # Apply app manifests
+    kubectl apply -f "$MANIFESTS_DIR/billing-app-statefulset.yaml"
+    kubectl apply -f "$MANIFESTS_DIR/inventory-app-deployment.yaml"
+    kubectl apply -f "$MANIFESTS_DIR/api-gateway-deployment.yaml"
+
+    # Apply HPA
+    kubectl apply -f "$MANIFESTS_DIR/hpa.yaml"
+
+    log_info "All manifests deployed successfully!"
+}
+
 # Function to create the cluster
 create_cluster() {
     log_info "Creating K3s cluster with Vagrant..."
@@ -55,10 +95,13 @@ create_cluster() {
     chmod 600 "$KUBECONFIG_PATH"
     export KUBECONFIG="$KUBECONFIG_PATH"
     
-    log_info "Cluster created successfully!"
     log_info "Verifying cluster nodes..."
-    
     kubectl get nodes
+    
+    # Deploy all manifests
+    deploy_manifests
+
+    echo "cluster created"
 }
 
 # Function to start the cluster
@@ -85,41 +128,8 @@ start_cluster() {
     
     export KUBECONFIG="$KUBECONFIG_PATH"
     
-    # Apply manifests
-    log_info "Deploying manifests..."
-    
-    if [ ! -d "$MANIFESTS_DIR" ]; then
-        log_error "Manifests directory not found at $MANIFESTS_DIR"
-        exit 1
-    fi
-    
-    # Apply secrets first
-    kubectl apply -f "$MANIFESTS_DIR/secrets.yaml"
-    
-    # Wait a bit for secrets to be created
-    sleep 2
-    
-    # Apply database manifests
-    kubectl apply -f "$MANIFESTS_DIR/inventory-db-statefulset.yaml"
-    kubectl apply -f "$MANIFESTS_DIR/billing-db-statefulset.yaml"
-    
-    # Wait for databases to initialize
-    log_info "Waiting for databases to be ready..."
-    sleep 5
-    
-    # Apply RabbitMQ
-    kubectl apply -f "$MANIFESTS_DIR/rabbitmq-deployment.yaml"
-    
-    # Wait for RabbitMQ
-    sleep 3
-    
-    # Apply app manifests
-    kubectl apply -f "$MANIFESTS_DIR/billing-app-statefulset.yaml"
-    kubectl apply -f "$MANIFESTS_DIR/inventory-app-deployment.yaml"
-    kubectl apply -f "$MANIFESTS_DIR/api-gateway-deployment.yaml"
-    
-    # Apply HPA
-    kubectl apply -f "$MANIFESTS_DIR/hpa.yaml"
+    # Deploy all manifests
+    deploy_manifests
     
     log_info "Cluster started successfully!"
     log_info ""

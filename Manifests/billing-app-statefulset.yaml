@@ -46,18 +46,30 @@ spec:
                   name: billing-db-secret
                   key: POSTGRES_PASSWORD
             - name: RABBITMQ_HOST
-              value: "rabbitmq"
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_HOST
             - name: RABBITMQ_PORT
-              value: "5672"
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_PORT
             - name: RABBITMQ_USER
-              value: "rabbitmq_user"
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_DEFAULT_USER
             - name: RABBITMQ_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: rabbitmq-secret
                   key: RABBITMQ_DEFAULT_PASS
             - name: RABBITMQ_QUEUE
-              value: "billing_queue"
+              valueFrom:
+                secretKeyRef:
+                  name: rabbitmq-secret
+                  key: RABBITMQ_QUEUE
           resources:
             requests:
               memory: "256Mi"

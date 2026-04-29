@@ -18,12 +18,15 @@ echo "⏳ Starting RabbitMQ server (background)..."
 sleep 8
 
 # Check if user already exists, create if not
-echo "🔑 Setting up RabbitMQ user..."
-/usr/lib/rabbitmq/bin/rabbitmqctl list_users 2>/dev/null | grep -q "rabbitmq_user" || \
-  /usr/lib/rabbitmq/bin/rabbitmqctl add_user rabbitmq_user "${RABBITMQ_PASSWORD}"
+# Use RABBITMQ_DEFAULT_USER env var (set by K8s secret) instead of hardcoded username
+RMQ_USER="${RABBITMQ_DEFAULT_USER:-rabbitmq_user}"
+RMQ_PASS="${RABBITMQ_DEFAULT_PASS:-${RABBITMQ_PASSWORD}}"
+echo "🔑 Setting up RabbitMQ user: ${RMQ_USER}..."
+/usr/lib/rabbitmq/bin/rabbitmqctl list_users 2>/dev/null | grep -q "${RMQ_USER}" || \
+  /usr/lib/rabbitmq/bin/rabbitmqctl add_user "${RMQ_USER}" "${RMQ_PASS}"
 
 # Set user permissions for all vhosts and operations
-/usr/lib/rabbitmq/bin/rabbitmqctl set_permissions -p / rabbitmq_user ".*" ".*" ".*" 2>/dev/null || true
+/usr/lib/rabbitmq/bin/rabbitmqctl set_permissions -p / "${RMQ_USER}" ".*" ".*" ".*" 2>/dev/null || true
 
 echo "✅ RabbitMQ configuration complete"
 
