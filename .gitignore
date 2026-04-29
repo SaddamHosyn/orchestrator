@@ -1,10 +1,8 @@
 # Secrets and Environment
 .env*
-!.env.example
 
 # Kubernetes Secrets (contain encoded credentials)
 Manifests/secrets.yaml
-!Manifests/secrets.yaml.example
 
 # K3s cluster token
 Scripts/k3s-node-token
