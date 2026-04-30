@@ -26,6 +26,7 @@ A production-grade Kubernetes (K3s) cluster deploying six microservices across a
 This project migrates a microservices architecture from a Docker Compose setup to a production-ready **K3s Kubernetes cluster** running on 2 Vagrant VMs (1 master, 1 agent). The six services communicate through HTTP APIs and a RabbitMQ message queue, with full auto-scaling and persistent storage.
 
 **Key features:**
+
 - Two-node K3s cluster provisioned entirely by Vagrantfile
 - All infrastructure managed with a single `orchestrator.sh` script
 - Stateless services auto-scale via HPA (1–3 replicas, 60% CPU trigger)
@@ -80,14 +81,14 @@ This project migrates a microservices architecture from a Docker Compose setup t
 
 ## Services
 
-| Service | Kind | Replicas | Port | Purpose |
-|---|---|---|---|---|
-| `api-gateway-app` | Deployment + HPA | 1–3 | 3000 (NodePort 30000) | Single entry point — routes all external requests |
-| `inventory-app` | Deployment + HPA | 1–3 | 8080 | Inventory CRUD API (movies database) |
-| `billing-app` | StatefulSet | 1 | 8080 | Billing consumer — processes orders from RabbitMQ queue |
-| `rabbitmq` | Deployment | 1 | 5672 / 15672 | Message broker — decouples gateway from billing-app |
-| `inventory-database` | StatefulSet | 1 | 5432 | PostgreSQL — stores movies (`movies` database) |
-| `billing-database` | StatefulSet | 1 | 5432 | PostgreSQL — stores orders (`orders` database) |
+| Service              | Kind             | Replicas | Port                  | Purpose                                                 |
+| -------------------- | ---------------- | -------- | --------------------- | ------------------------------------------------------- |
+| `api-gateway-app`    | Deployment + HPA | 1–3      | 3000 (NodePort 30000) | Single entry point — routes all external requests       |
+| `inventory-app`      | Deployment + HPA | 1–3      | 8080                  | Inventory CRUD API (movies database)                    |
+| `billing-app`        | StatefulSet      | 1        | 8080                  | Billing consumer — processes orders from RabbitMQ queue |
+| `rabbitmq`           | Deployment       | 1        | 5672 / 15672          | Message broker — decouples gateway from billing-app     |
+| `inventory-database` | StatefulSet      | 1        | 5432                  | PostgreSQL — stores movies (`movies` database)          |
+| `billing-database`   | StatefulSet      | 1        | 5432                  | PostgreSQL — stores orders (`orders` database)          |
 
 ---
 
@@ -95,16 +96,17 @@ This project migrates a microservices architecture from a Docker Compose setup t
 
 ### System Requirements
 
-| Requirement | Minimum |
-|---|---|
-| RAM | 4 GB free (2 GB per VM) |
-| Disk | 20 GB free |
-| CPU | 2 cores with virtualization support (VT-x / AMD-V) |
-| OS | macOS, Linux, or Windows |
+| Requirement | Minimum                                            |
+| ----------- | -------------------------------------------------- |
+| RAM         | 4 GB free (2 GB per VM)                            |
+| Disk        | 20 GB free                                         |
+| CPU         | 2 cores with virtualization support (VT-x / AMD-V) |
+| OS          | macOS, Linux, or Windows                           |
 
 ### Required Software
 
 **1. VirtualBox 7.0+**
+
 ```bash
 # macOS
 brew install virtualbox
@@ -114,6 +116,7 @@ sudo apt install virtualbox
 ```
 
 **2. Vagrant 2.4+**
+
 ```bash
 # macOS
 brew install vagrant
@@ -123,6 +126,7 @@ sudo apt install vagrant
 ```
 
 **3. kubectl**
+
 ```bash
 # macOS
 brew install kubectl
@@ -131,7 +135,8 @@ brew install kubectl
 sudo apt-get install -y kubectl
 ```
 
-**4. Docker** *(only needed to rebuild images)*
+**4. Docker** _(only needed to rebuild images)_
+
 ```bash
 # macOS
 brew install docker
@@ -200,19 +205,21 @@ orchestrator/
 
 All credentials are stored in `Manifests/secrets.yaml` as Kubernetes Secret objects with base64-encoded values. **No plaintext credentials exist anywhere in the manifests.**
 
-| Secret Name | Keys |
-|---|---|
-| `inventory-db-secret` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
-| `billing-db-secret` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
-| `rabbitmq-secret` | `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_QUEUE` |
+| Secret Name           | Keys                                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------- |
+| `inventory-db-secret` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`                                                  |
+| `billing-db-secret`   | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD`                                                  |
+| `rabbitmq-secret`     | `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_QUEUE` |
 
 To encode a new value:
+
 ```bash
 echo -n "mypassword" | base64
 # bXlwYXNzd29yZA==
 ```
 
 To decode an existing secret:
+
 ```bash
 kubectl get secret billing-db-secret -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d
 ```
@@ -221,14 +228,14 @@ kubectl get secret billing-db-secret -o jsonpath='{.data.POSTGRES_PASSWORD}' | b
 
 All images are published to Docker Hub under `hussainsaddam/`:
 
-| Image | Tag |
-|---|---|
-| `hussainsaddam/api-gateway` | `1.0` |
-| `hussainsaddam/inventory-app` | `1.0` |
-| `hussainsaddam/billing-app` | `1.0` |
+| Image                              | Tag   |
+| ---------------------------------- | ----- |
+| `hussainsaddam/api-gateway`        | `1.0` |
+| `hussainsaddam/inventory-app`      | `1.0` |
+| `hussainsaddam/billing-app`        | `1.0` |
 | `hussainsaddam/inventory-database` | `1.0` |
-| `hussainsaddam/billing-database` | `1.0` |
-| `hussainsaddam/rabbitmq` | `1.0` |
+| `hussainsaddam/billing-database`   | `1.0` |
+| `hussainsaddam/rabbitmq`           | `1.0` |
 
 > All images must be **public** on Docker Hub for the cluster to pull them without authentication.
 
@@ -243,6 +250,7 @@ All images are published to Docker Hub under `hussainsaddam/`:
 ```
 
 This single command:
+
 1. Launches 2 Debian 11 VMs via Vagrant (master + agent)
 2. Installs K3s server on master, K3s agent on worker
 3. Copies kubeconfig to `~/.kube/config` on your local machine
@@ -250,6 +258,7 @@ This single command:
 5. Prints `cluster created` when complete
 
 **Expected output:**
+
 ```
 NAME     STATUS   ROLES           AGE   VERSION
 master   Ready    control-plane   30s   v1.35.4+k3s1
@@ -265,6 +274,7 @@ kubectl get pods -o wide
 ```
 
 **Expected (all 6 pods `1/1 Running`):**
+
 ```
 NAME                               READY   STATUS    NODE
 api-gateway-app-XXXXX              1/1     Running   master
@@ -294,6 +304,7 @@ kubectl get pvc          # Persistent volumes for databases
 ### Inventory Endpoints
 
 #### Create a Movie
+
 ```bash
 curl -s -X POST http://192.168.56.10:30000/api/movies/ \
   -H "Content-Type: application/json" \
@@ -302,16 +313,19 @@ curl -s -X POST http://192.168.56.10:30000/api/movies/ \
 ```
 
 #### Get All Movies
+
 ```bash
 curl -s http://192.168.56.10:30000/api/movies/ | python3 -m json.tool
 ```
 
 #### Get Movie by ID
+
 ```bash
 curl -s http://192.168.56.10:30000/api/movies/1 | python3 -m json.tool
 ```
 
 #### Update a Movie
+
 ```bash
 curl -s -X PUT http://192.168.56.10:30000/api/movies/1 \
   -H "Content-Type: application/json" \
@@ -320,6 +334,7 @@ curl -s -X PUT http://192.168.56.10:30000/api/movies/1 \
 ```
 
 #### Delete a Movie
+
 ```bash
 curl -s -X DELETE http://192.168.56.10:30000/api/movies/1
 ```
@@ -327,6 +342,7 @@ curl -s -X DELETE http://192.168.56.10:30000/api/movies/1
 ### Billing Endpoint
 
 #### Create a Billing Order
+
 ```bash
 curl -s -X POST http://192.168.56.10:30000/api/billing/ \
   -H "Content-Type: application/json" \
@@ -337,6 +353,7 @@ curl -s -X POST http://192.168.56.10:30000/api/billing/ \
 > **Resilience:** The gateway returns `200 OK` immediately by publishing the order to RabbitMQ. The billing-app processes it asynchronously. If billing-app is offline, the message waits in the durable queue and is processed when the service restarts — **no orders are ever lost**.
 
 ### Health Check
+
 ```bash
 curl http://192.168.56.10:30000/health
 curl http://192.168.56.10:30000/ready
@@ -454,15 +471,15 @@ kubectl get events --sort-by='.lastTimestamp'
 
 ### Common Issues
 
-| Symptom | Cause | Fix |
-|---|---|---|
-| `ImagePullBackOff` | Image not public on Docker Hub | Set image visibility to Public on hub.docker.com |
-| `CrashLoopBackOff` | App crashed on startup | Run `kubectl logs <pod> --previous` to see error |
-| `Pending` pod | Node out of memory/CPU | Run `kubectl describe node` and check `Conditions` |
-| `Evicted` pods | Node disk pressure | Run `vagrant ssh <node> -- df -h` to check disk |
-| HPA shows `<unknown>` CPU | metrics-server not ready | Wait 2–3 minutes after deploy |
-| Gateway returns 502 | inventory-app not reachable | Check `kubectl logs <gateway-pod>` for connection error |
-| Orders not appearing in DB | billing-app not consuming | Check `kubectl logs billing-app-0` for RabbitMQ connection |
+| Symptom                    | Cause                          | Fix                                                        |
+| -------------------------- | ------------------------------ | ---------------------------------------------------------- |
+| `ImagePullBackOff`         | Image not public on Docker Hub | Set image visibility to Public on hub.docker.com           |
+| `CrashLoopBackOff`         | App crashed on startup         | Run `kubectl logs <pod> --previous` to see error           |
+| `Pending` pod              | Node out of memory/CPU         | Run `kubectl describe node` and check `Conditions`         |
+| `Evicted` pods             | Node disk pressure             | Run `vagrant ssh <node> -- df -h` to check disk            |
+| HPA shows `<unknown>` CPU  | metrics-server not ready       | Wait 2–3 minutes after deploy                              |
+| Gateway returns 502        | inventory-app not reachable    | Check `kubectl logs <gateway-pod>` for connection error    |
+| Orders not appearing in DB | billing-app not consuming      | Check `kubectl logs billing-app-0` for RabbitMQ connection |
 
 ### Clean Up Evicted/Error Pods
 
@@ -502,6 +519,5 @@ vagrant destroy -f
 
 ---
 
-**Author:** Hussain Saddam  
 **Stack:** K3s · Python/Flask · PostgreSQL · RabbitMQ · Vagrant · VirtualBox  
 **Last Updated:** April 2026
