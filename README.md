@@ -1,670 +1,507 @@
-# Orchestrator: Kubernetes Microservices Deployment
+# CRUD Master — K3s Kubernetes Microservices
 
-A complete Kubernetes (K3s) cluster setup for deploying microservices across a distributed system. This project demonstrates containerization, infrastructure-as-code, Kubernetes orchestration, and DevOps best practices.
+A production-grade Kubernetes (K3s) cluster deploying six microservices across a two-node distributed system. This project demonstrates containerization, infrastructure-as-code, Kubernetes orchestration, auto-scaling, and message-driven resilience.
 
-## Project Overview
+---
 
-This project migrates a microservices architecture from a 3-VM Docker Compose setup to a production-ready K3s Kubernetes cluster running on 2 VMs (1 master, 1 worker). It includes six core services that communicate through APIs and message queues.
+## Table of Contents
 
-### Architecture
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Services](#services)
+- [Prerequisites](#prerequisites)
+- [Project Structure](#project-structure)
+- [Configuration](#configuration)
+- [Setup & Deployment](#setup--deployment)
+- [Usage & API Reference](#usage--api-reference)
+- [Cluster Management](#cluster-management)
+- [Database Access](#database-access)
+- [Troubleshooting](#troubleshooting)
+- [Security](#security)
+
+---
+
+## Overview
+
+This project migrates a microservices architecture from a Docker Compose setup to a production-ready **K3s Kubernetes cluster** running on 2 Vagrant VMs (1 master, 1 agent). The six services communicate through HTTP APIs and a RabbitMQ message queue, with full auto-scaling and persistent storage.
+
+**Key features:**
+- Two-node K3s cluster provisioned entirely by Vagrantfile
+- All infrastructure managed with a single `orchestrator.sh` script
+- Stateless services auto-scale via HPA (1–3 replicas, 60% CPU trigger)
+- Stateful services (databases, billing-app) use PersistentVolumeClaims for data durability
+- RabbitMQ ensures billing orders are never lost even when billing-app is offline
+- All credentials stored exclusively in Kubernetes Secrets — never hardcoded
+
+---
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────┐
-│           Kubernetes Cluster (K3s)                  │
-│  ┌──────────────────────────────────────────────┐   │
-│  │ Master Node (192.168.56.10)                  │   │
-│  │  - K3s Server                                │   │
-│  │  - API Server                                │   │
-│  │  - Scheduler                                 │   │
-│  └──────────────────────────────────────────────┘   │
-│  ┌──────────────────────────────────────────────┐   │
-│  │ Worker Node (192.168.56.11)                  │   │
-│  │  - K3s Agent                                 │   │
-│  │  - Pods Deployment:                          │   │
-│  │    • API Gateway (Deployment, HPA)           │   │
-│  │    • Inventory App (Deployment, HPA)         │   │
-│  │    • Billing App (StatefulSet)               │   │
-│  │    • Inventory Database (StatefulSet)        │   │
-│  │    • Billing Database (StatefulSet)          │   │
-│  │    • RabbitMQ (Deployment)                   │   │
-│  └──────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────┘
-       ↓
-   PersistentVolumes for Databases
-   Kubernetes Secrets for Credentials
-   HPA for Auto-scaling
+                        ┌──────────────────────────────────────────────┐
+  External Traffic      │         Kubernetes Cluster (K3s)             │
+  http://               │                                              │
+  192.168.56.10:30000   │  ┌─────────────────────────────────────┐    │
+        │               │  │   Master Node — 192.168.56.10        │    │
+        ▼               │  │   K3s Server · API Server            │    │
+  ┌─────────────┐       │  │   Scheduler · Controller Manager     │    │
+  │ api-gateway │       │  │   etcd · kube-proxy                  │    │
+  │ (NodePort   │       │  │                                      │    │
+  │  :30000)    │       │  │   Pods: api-gateway · billing-app    │    │
+  └──────┬──────┘       │  │          rabbitmq                    │    │
+         │              │  └─────────────────────────────────────┘    │
+    ┌────┴─────┐         │                                              │
+    ▼          ▼         │  ┌─────────────────────────────────────┐    │
+┌───────┐ ┌────────┐     │  │   Agent Node — 192.168.56.11         │    │
+│ /api/ │ │ /api/  │     │  │   K3s Agent · kube-proxy             │    │
+│movies │ │billing │     │  │                                      │    │
+└───┬───┘ └───┬────┘     │  │   Pods: inventory-app                │    │
+    │         │          │  │          inventory-database          │    │
+    ▼         ▼          │  │          billing-database            │    │
+┌────────┐ ┌────────┐    │  └─────────────────────────────────────┘    │
+│Inventory│ │RabbitMQ│    │                                              │
+│  App   │ │ Queue  │    │   PersistentVolumes for both databases       │
+└───┬────┘ └───┬────┘    │   Kubernetes Secrets for all credentials     │
+    │          │         │   HPA auto-scaling for gateway + inventory   │
+    ▼          ▼         └──────────────────────────────────────────────┘
+┌────────┐ ┌────────┐
+│Inventory│ │Billing │
+│   DB   │ │  App   │
+│(movies)│ └───┬────┘
+└────────┘     ▼
+           ┌────────┐
+           │Billing │
+           │   DB   │
+           │(orders)│
+           └────────┘
 ```
+
+---
 
 ## Services
 
-| Service              | Type        | Replicas  | Port | Purpose                                         |
-| -------------------- | ----------- | --------- | ---- | ----------------------------------------------- |
-| `api-gateway-app`    | Deployment  | 1-3 (HPA) | 3000 | API Gateway - forwards requests to all services |
-| `inventory-app`      | Deployment  | 1-3 (HPA) | 8080 | Inventory management API                        |
-| `billing-app`        | StatefulSet | 1         | 8080 | Billing and order processing                    |
-| `rabbitmq`           | Deployment  | 1         | 5672 | Message queue broker                            |
-| `inventory-database` | StatefulSet | 1         | 5432 | PostgreSQL for inventory                        |
-| `billing-database`   | StatefulSet | 1         | 5432 | PostgreSQL for billing                          |
+| Service | Kind | Replicas | Port | Purpose |
+|---|---|---|---|---|
+| `api-gateway-app` | Deployment + HPA | 1–3 | 3000 (NodePort 30000) | Single entry point — routes all external requests |
+| `inventory-app` | Deployment + HPA | 1–3 | 8080 | Inventory CRUD API (movies database) |
+| `billing-app` | StatefulSet | 1 | 8080 | Billing consumer — processes orders from RabbitMQ queue |
+| `rabbitmq` | Deployment | 1 | 5672 / 15672 | Message broker — decouples gateway from billing-app |
+| `inventory-database` | StatefulSet | 1 | 5432 | PostgreSQL — stores movies (`movies` database) |
+| `billing-database` | StatefulSet | 1 | 5432 | PostgreSQL — stores orders (`orders` database) |
+
+---
 
 ## Prerequisites
 
 ### System Requirements
 
-- **macOS, Linux, or Windows** with virtualization support
-- **RAM**: At least 4-5 GB free (for 2 VMs)
-- **Disk Space**: 20+ GB free for VMs and images
+| Requirement | Minimum |
+|---|---|
+| RAM | 4 GB free (2 GB per VM) |
+| Disk | 20 GB free |
+| CPU | 2 cores with virtualization support (VT-x / AMD-V) |
+| OS | macOS, Linux, or Windows |
 
-### Software Requirements
+### Required Software
 
-1. **VirtualBox** 7.0+
+**1. VirtualBox 7.0+**
+```bash
+# macOS
+brew install virtualbox
 
-   ```bash
-   # macOS (using Homebrew)
-   brew install virtualbox
-   ```
+# Ubuntu/Debian
+sudo apt install virtualbox
+```
 
-2. **Vagrant** 2.4+
+**2. Vagrant 2.4+**
+```bash
+# macOS
+brew install vagrant
 
-   ```bash
-   # macOS (using Homebrew)
-   brew install vagrant
-   ```
+# Ubuntu/Debian
+sudo apt install vagrant
+```
 
-3. **kubectl** (on your local machine)
+**3. kubectl**
+```bash
+# macOS
+brew install kubectl
 
-   ```bash
-   # macOS (using Homebrew)
-   brew install kubectl
-   ```
+# Ubuntu/Debian
+sudo apt-get install -y kubectl
+```
 
-4. **Docker** (optional, for building images locally)
-   ```bash
-   # macOS (using Homebrew)
-   brew install docker
-   ```
+**4. Docker** *(only needed to rebuild images)*
+```bash
+# macOS
+brew install docker
+```
 
-### Kubernetes Knowledge
-
-Before starting, read the official documentation:
-
-- [Kubernetes Core Concepts](https://kubernetes.io/docs/concepts/overview/what-is-kubernetes/)
-- [K3s Documentation](https://docs.k3s.io/)
-- [Deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
-- [StatefulSets](https://kubernetes.io/docs/concepts/workloads/controllers/statefulset/)
-- [Services](https://kubernetes.io/docs/concepts/services-networking/service/)
-- [HPA](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+---
 
 ## Project Structure
 
 ```
 orchestrator/
-├── Vagrantfile                      # VM configuration for K3s cluster
-├── orchestrator.sh                  # Management script (create/start/stop)
+│
+├── Vagrantfile                        # Defines master (192.168.56.10) + agent (192.168.56.11) VMs
+├── orchestrator.sh                    # Cluster lifecycle: create | start | stop | status | logs
+├── README.md                          # This file
 │
 ├── Scripts/
-│   ├── master.sh                    # K3s server setup
-│   ├── agent.sh                     # K3s worker setup
-│   └── k3s-node-token              # Generated token (shared during setup)
+│   ├── master.sh                      # Provisions K3s server on master VM
+│   ├── agent.sh                       # Provisions K3s agent on worker VM
+│   └── k3s-node-token                 # Shared token for agent to join cluster
 │
-├── Manifests/                       # Kubernetes YAML manifests
-│   ├── secrets.yaml                 # Database and RabbitMQ credentials
-│   ├── inventory-db-statefulset.yaml
-│   ├── billing-db-statefulset.yaml
-│   ├── billing-app-statefulset.yaml
-│   ├── rabbitmq-deployment.yaml
-│   ├── inventory-app-deployment.yaml
-│   ├── api-gateway-deployment.yaml
-│   └── hpa.yaml                     # Auto-scaling rules
+├── Manifests/                         # All Kubernetes YAML definitions
+│   ├── secrets.yaml                   # All credentials (base64 encoded)
+│   ├── inventory-db-statefulset.yaml  # PostgreSQL for inventory
+│   ├── billing-db-statefulset.yaml    # PostgreSQL for billing
+│   ├── rabbitmq-deployment.yaml       # RabbitMQ message broker
+│   ├── inventory-app-deployment.yaml  # Inventory REST API
+│   ├── billing-app-statefulset.yaml   # Billing queue consumer
+│   ├── api-gateway-deployment.yaml    # API Gateway (external entry point)
+│   └── hpa.yaml                       # Auto-scaling rules for gateway + inventory
 │
-├── srcs/                            # Application source code
-│   ├── api-gateway-app/
-│   ├── inventory-app/
+├── Dockerfiles/                       # Dockerfiles + source code for all services
+│   ├── api-gateway/
+│   │   ├── app/                       # Application source code
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── server.py
 │   ├── billing-app/
-│   ├── inventory-database/
+│   │   ├── app/
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── server.py
 │   ├── billing-database/
-│   └── rabbitmq-service/
+│   │   ├── Dockerfile
+│   │   └── entrypoint.sh              # DB init + startup script
+│   ├── inventory-app/
+│   │   ├── app/
+│   │   ├── Dockerfile
+│   │   ├── requirements.txt
+│   │   └── server.py
+│   ├── inventory-database/
+│   │   ├── Dockerfile
+│   │   └── entrypoint.sh              # DB init + startup script
+│   └── rabbitmq/
+│       ├── Dockerfile
+│       └── entrypoint.sh              # RabbitMQ startup script
 │
-├── .env                             # Environment variables (credentials)
-├── docker-compose.yml               # (Legacy - for reference)
-├── README.md                        # This file
-├── allstepsneed.md                  # Detailed implementation guide
-└── Architecture.png                 # System architecture diagram
+└── docker-compose.yml                 # Legacy reference (not used in K8s deployment)
 ```
+
+---
 
 ## Configuration
 
-### Environment Variables (.env)
-
-The `.env` file contains all credentials and configuration:
-
-```env
-# Inventory Database
-INVENTORY_DB_NAME=movies
-INVENTORY_DB_USER=inventory_user
-INVENTORY_DB_PASSWORD=inventory_pass
-
-# Billing Database
-BILLING_DB_NAME=orders
-BILLING_DB_USER=billing_user
-BILLING_DB_PASSWORD=billing_pass
-
-# RabbitMQ
-RABBITMQ_USER=billing_rmq
-RABBITMQ_PASSWORD=billing_rmq_pass
-RABBITMQ_HOST=rabbitmq
-RABBITMQ_PORT=5672
-RABBITMQ_QUEUE=billing_queue
-
-# API Ports
-INVENTORY_PORT=8080
-BILLING_PORT=8081
-GATEWAY_PORT=3000
-```
-
-**IMPORTANT**: Never commit `.env` to git. It's already in `.gitignore`.
-
 ### Kubernetes Secrets
 
-All credentials are stored in `Manifests/secrets.yaml` as Kubernetes Secret objects. Values are base64-encoded for security.
+All credentials are stored in `Manifests/secrets.yaml` as Kubernetes Secret objects with base64-encoded values. **No plaintext credentials exist anywhere in the manifests.**
 
-Example:
+| Secret Name | Keys |
+|---|---|
+| `inventory-db-secret` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| `billing-db-secret` | `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` |
+| `rabbitmq-secret` | `RABBITMQ_DEFAULT_USER`, `RABBITMQ_DEFAULT_PASS`, `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_QUEUE` |
 
+To encode a new value:
 ```bash
-# To encode a value
 echo -n "mypassword" | base64
-# Output: bXlwYXNzd29yZA==
-
-# To decode
-echo "bXlwYXNzd29yZA==" | base64 -d
+# bXlwYXNzd29yZA==
 ```
 
-### Docker Images
-
-All services must be pushed to Docker Hub before deployment. Update image references in manifests:
-
-```yaml
-image: yourusername/api-gateway:1.0
+To decode an existing secret:
+```bash
+kubectl get secret billing-db-secret -o jsonpath='{.data.POSTGRES_PASSWORD}' | base64 -d
 ```
 
-Replace `yourusername` with your Docker Hub username.
+### Docker Hub Images
+
+All images are published to Docker Hub under `hussainsaddam/`:
+
+| Image | Tag |
+|---|---|
+| `hussainsaddam/api-gateway` | `1.0` |
+| `hussainsaddam/inventory-app` | `1.0` |
+| `hussainsaddam/billing-app` | `1.0` |
+| `hussainsaddam/inventory-database` | `1.0` |
+| `hussainsaddam/billing-database` | `1.0` |
+| `hussainsaddam/rabbitmq` | `1.0` |
+
+> All images must be **public** on Docker Hub for the cluster to pull them without authentication.
+
+---
 
 ## Setup & Deployment
 
-### Step 1: Prepare Docker Images
-
-Push all 6 images to Docker Hub:
-
-```bash
-# Navigate to each service directory and build/push
-docker build -t yourusername/api-gateway:1.0 ./srcs/api-gateway-app/
-docker push yourusername/api-gateway:1.0
-
-# Repeat for all services:
-# - yourusername/inventory-app:1.0
-# - yourusername/billing-app:1.0
-# - yourusername/inventory-database:1.0
-# - yourusername/billing-database:1.0
-# - yourusername/rabbitmq:1.0
-```
-
-**Ensure all images are PUBLIC on Docker Hub** for the cluster to pull them.
-
-### Step 2: Update Manifests
-
-Edit manifest files to replace `yourusername` with your Docker Hub username:
-
-```bash
-sed -i 's/yourusername/YOUR_DOCKER_HUB_USERNAME/g' Manifests/*.yaml
-```
-
-### Step 3: Create the Cluster
+### Step 1 — Create the Cluster
 
 ```bash
 ./orchestrator.sh create
 ```
 
-This will:
+This single command:
+1. Launches 2 Debian 11 VMs via Vagrant (master + agent)
+2. Installs K3s server on master, K3s agent on worker
+3. Copies kubeconfig to `~/.kube/config` on your local machine
+4. Applies all Kubernetes manifests in dependency order
+5. Prints `cluster created` when complete
 
-- Launch 2 Debian VMs (master and agent)
-- Install K3s on both nodes
-- Verify the cluster is ready
-- Download and configure `kubectl`
-
-Expected output:
-
+**Expected output:**
 ```
-NAME     STATUS   ROLES                  AGE   VERSION
-master   Ready    control-plane,master   30s   v1.28.x
-agent    Ready    <none>                 20s   v1.28.x
+NAME     STATUS   ROLES           AGE   VERSION
+master   Ready    control-plane   30s   v1.35.4+k3s1
+agent    Ready    <none>          20s   v1.35.4+k3s1
+
+cluster created
 ```
 
-### Step 4: Deploy Services
+### Step 2 — Verify All Pods Are Running
 
 ```bash
-./orchestrator.sh start
-```
-
-This will:
-
-- Resume the VMs
-- Apply all Kubernetes manifests
-- Deploy services, databases, and queues
-- Configure auto-scaling (HPA)
-
-### Step 5: Verify Deployment
-
-```bash
-# Check all pods
 kubectl get pods -o wide
-
-# Check services
-kubectl get svc
-
-# Check deployments
-kubectl get deployments
-
-# Check StatefulSets
-kubectl get statefulsets
-
-# Check persistent volumes
-kubectl get pv
-
-# Check HPA status
-kubectl get hpa
 ```
 
-Expected output (10+ pods running):
-
+**Expected (all 6 pods `1/1 Running`):**
 ```
-NAME                                READY   STATUS    RESTARTS   AGE
-api-gateway-app-xxxxx               1/1     Running   0          5m
-inventory-app-xxxxx                 1/1     Running   0          5m
-billing-app-0                       1/1     Running   0          5m
-rabbitmq-xxxxx                      1/1     Running   0          5m
-inventory-database-0                1/1     Running   0          5m
-billing-database-0                  1/1     Running   0          5m
+NAME                               READY   STATUS    NODE
+api-gateway-app-XXXXX              1/1     Running   master
+billing-app-0                      1/1     Running   master
+billing-database-0                 1/1     Running   agent
+inventory-app-XXXXX                1/1     Running   agent
+inventory-database-0               1/1     Running   agent
+rabbitmq-XXXXX                     1/1     Running   master
 ```
 
-## Usage
-
-### Accessing Services
-
-#### API Gateway (External Access)
+### Step 3 — Verify Full Infrastructure
 
 ```bash
-# Access from your local machine
-curl http://192.168.56.10:30000/health
-
-# Or use the Postman collection
-# See: CRUD_Master.postman_collection.json
+kubectl get all          # All resources overview
+kubectl get svc          # Services and ports
+kubectl get hpa          # HPA status and CPU targets
+kubectl get secrets      # Credentials
+kubectl get pvc          # Persistent volumes for databases
 ```
-
-#### Internal Service Communication
-
-From within the cluster, services communicate using their DNS names:
-
-- `api-gateway-app:3000`
-- `inventory-app:8080`
-- `billing-app:8080`
-- `rabbitmq:5672`
-- `inventory-database:5432`
-- `billing-database:5432`
-
-### Monitoring & Debugging
-
-#### View Pod Logs
-
-```bash
-# Follow real-time logs
-./orchestrator.sh logs api-gateway-app-xxxxx
-
-# Or using kubectl
-kubectl logs -f pod-name
-```
-
-#### SSH Into a Node
-
-```bash
-# SSH into master node
-vagrant ssh master
-
-# SSH into agent node
-vagrant ssh agent
-```
-
-#### Execute Command in Pod
-
-```bash
-kubectl exec -it pod-name -- /bin/sh
-```
-
-#### Check Pod Details
-
-```bash
-kubectl describe pod pod-name
-```
-
-### Cluster Status
-
-Check cluster health:
-
-```bash
-./orchestrator.sh status
-```
-
-This shows:
-
-- Node status (Ready/NotReady)
-- Pod status
-- Service endpoints
-- API Gateway access URL
-
-### Scaling
-
-HPA automatically scales based on CPU:
-
-```bash
-# Check HPA status
-kubectl get hpa
-
-# Manually scale (overrides HPA temporarily)
-kubectl scale deployment api-gateway-app --replicas=2
-
-# View HPA events
-kubectl describe hpa api-gateway-app-hpa
-```
-
-### Stopping the Cluster
-
-```bash
-./orchestrator.sh stop
-```
-
-This will:
-
-- Delete all deployed resources
-- Suspend the VMs (can be resumed later)
-- Clean up
-
-**Note**: VMs are suspended, not destroyed. You can resume with:
-
-```bash
-./orchestrator.sh start
-```
-
-## Database Management
-
-### Connect to Inventory Database
-
-```bash
-# From your local machine
-psql -h 192.168.56.10 -p 5432 -U inventory_user -d movies
-# Password: inventory_pass
-
-# From within a pod
-kubectl exec -it inventory-database-0 -- psql -U inventory_user -d movies
-```
-
-### Connect to Billing Database
-
-```bash
-psql -h 192.168.56.10 -p 5432 -U billing_user -d orders
-# Password: billing_pass
-```
-
-### Database Schema
-
-Update the Dockerfiles to include schema initialization SQL files:
-
-```dockerfile
-COPY init.sql /docker-entrypoint-initdb.d/
-```
-
-This automatically runs SQL on container startup.
-
-## Troubleshooting
-
-### VMs Not Starting
-
-```bash
-# Check VirtualBox status
-VBoxManage list vms
-
-# Increase available RAM or reduce VM memory in Vagrantfile
-# Default: master 2GB, agent 1GB
-```
-
-### Pods Not Running
-
-```bash
-# Check pod status and errors
-kubectl describe pod pod-name
-
-# Check node resources
-kubectl describe node node-name
-
-# Check image pull errors
-kubectl get events --sort-by='.lastTimestamp'
-```
-
-### Services Not Communicating
-
-```bash
-# Test DNS resolution
-kubectl exec -it pod-name -- nslookup service-name
-
-# Test connectivity
-kubectl exec -it pod-name -- curl http://other-service:port
-```
-
-### HPA Not Scaling
-
-```bash
-# Verify metrics-server is running (K3s includes it by default)
-kubectl get deployment metrics-server -n kube-system
-
-# Check resource requests are set (required for HPA)
-kubectl describe deployment api-gateway-app
-# Must have resources.requests.cpu defined
-```
-
-### Database Connection Issues
-
-```bash
-# Verify secrets are created
-kubectl get secrets
-
-# Check secret values (base64 encoded)
-kubectl get secret inventory-db-secret -o yaml
-
-# Test database pod connectivity
-kubectl exec -it inventory-database-0 -- psql -U inventory_user -d movies -c '\dt'
-```
-
-## Performance Optimization
-
-### Resource Requests & Limits
-
-Each pod has resource constraints:
-
-```yaml
-resources:
-  requests:
-    cpu: "100m" # Minimum guaranteed
-    memory: "256Mi"
-  limits:
-    cpu: "500m" # Maximum allowed
-    memory: "512Mi"
-```
-
-Adjust based on actual workload.
-
-### HPA Tuning
-
-Edit `Manifests/hpa.yaml` to adjust scaling thresholds:
-
-```yaml
-averageUtilization: 60 # Scale up when CPU > 60%
-maxReplicas: 3 # Maximum 3 pods
-minReplicas: 1 # Minimum 1 pod
-```
-
-### PersistentVolume Performance
-
-Databases use local storage. For better performance in production:
-
-- Use NFS-backed PVs
-- Enable caching policies
-- Monitor disk I/O
-
-## Security Considerations
-
-1. **Secrets Management**
-   - Keep `.env` file secure (already in `.gitignore`)
-   - Never commit secrets to git
-   - Use Kubernetes Secret objects in production
-
-2. **Network Policies**
-   - Consider adding NetworkPolicies to restrict traffic
-   - Databases should not accept external connections
-
-3. **Image Security**
-   - Scan images for vulnerabilities
-   - Use specific version tags (not `latest`)
-   - Sign images with cosign
-
-4. **RBAC**
-   - Configure service accounts for applications
-   - Implement role-based access control
-
-## Advanced Topics
-
-### Adding Kubernetes Dashboard
-
-Monitor your cluster visually:
-
-```bash
-kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.7.0/aio/deploy/recommended.yaml
-
-# Access dashboard
-kubectl proxy
-# Visit: http://localhost:8001/api/v1/namespaces/kubernetes-dashboard/services/https:kubernetes-dashboard:/proxy/
-```
-
-### Logging with Loki + Grafana
-
-Deploy a logging stack:
-
-```bash
-# Add Grafana Helm repo
-helm repo add grafana https://grafana.github.io/helm-charts
-helm repo update
-
-# Install Loki
-helm install loki grafana/loki-stack -n monitoring --create-namespace
-```
-
-### Ingress Controller
-
-Replace NodePort with Ingress for better routing:
-
-```yaml
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: api-gateway-ingress
-spec:
-  ingressClassName: traefik
-  rules:
-    - host: api.local
-      http:
-        paths:
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: api-gateway-app
-                port:
-                  number: 3000
-```
-
-## Maintenance
-
-### Backup & Recovery
-
-```bash
-# Backup all manifests
-tar -czf manifests-backup.tar.gz Manifests/
-
-# Backup Vagrant VMs
-VBoxManage export master -o master-backup.ova
-VBoxManage export agent -o agent-backup.ova
-```
-
-### Updating Images
-
-To deploy a new version:
-
-1. Build and push new image
-2. Update image tag in manifest
-3. Apply updated manifest
-
-```bash
-kubectl apply -f Manifests/api-gateway-deployment.yaml
-```
-
-K3s will automatically trigger a rolling update.
-
-### Cluster Upgrades
-
-K3s handles updates automatically. Monitor version:
-
-```bash
-kubectl get nodes -o wide
-```
-
-## Learning Resources
-
-- [Kubernetes Documentation](https://kubernetes.io/docs/)
-- [K3s Quick Start](https://docs.k3s.io/quick-start)
-- [Vagrant Documentation](https://www.vagrantup.com/docs)
-- [Docker Best Practices](https://docs.docker.com/develop/dev-best-practices/)
-- [PostgreSQL Docker Image](https://hub.docker.com/_/postgres)
-- [RabbitMQ Docker Image](https://hub.docker.com/_/rabbitmq)
-
-## Project Timeline
-
-This project demonstrates:
-
-1. **Containerization** - Dockerfile best practices
-2. **Orchestration** - Kubernetes resource management
-3. **Infrastructure as Code** - Vagrant + YAML manifests
-4. **Monitoring & Scaling** - HPA auto-scaling
-5. **Data Persistence** - StatefulSets + PersistentVolumes
-6. **Security** - Kubernetes Secrets management
-7. **DevOps Workflows** - Automated deployment pipeline
-
-## Contributing
-
-To improve this project:
-
-1. Test all manifest updates
-2. Document configuration changes
-3. Update README with new features
-4. Maintain clean, idiomatic YAML
-
-## Support
-
-For issues or questions:
-
-1. Check the Troubleshooting section
-2. Review Kubernetes documentation
-3. Inspect pod logs and events
-4. Review allstepsneed.md for implementation details
 
 ---
 
-**Last Updated**: April 2026
-**Kubernetes Version**: K3s (Latest)
-**Vagrant**: 2.4+
-**VirtualBox**: 7.0+
+## Usage & API Reference
+
+**Gateway base URL:** `http://192.168.56.10:30000`
+
+### Inventory Endpoints
+
+#### Create a Movie
+```bash
+curl -s -X POST http://192.168.56.10:30000/api/movies/ \
+  -H "Content-Type: application/json" \
+  -d '{"title": "A new movie", "description": "Very short description"}' \
+  | python3 -m json.tool
+```
+
+#### Get All Movies
+```bash
+curl -s http://192.168.56.10:30000/api/movies/ | python3 -m json.tool
+```
+
+#### Get Movie by ID
+```bash
+curl -s http://192.168.56.10:30000/api/movies/1 | python3 -m json.tool
+```
+
+#### Update a Movie
+```bash
+curl -s -X PUT http://192.168.56.10:30000/api/movies/1 \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Updated title"}' \
+  | python3 -m json.tool
+```
+
+#### Delete a Movie
+```bash
+curl -s -X DELETE http://192.168.56.10:30000/api/movies/1
+```
+
+### Billing Endpoint
+
+#### Create a Billing Order
+```bash
+curl -s -X POST http://192.168.56.10:30000/api/billing/ \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "20", "number_of_items": "99", "total_amount": "250"}' \
+  | python3 -m json.tool
+```
+
+> **Resilience:** The gateway returns `200 OK` immediately by publishing the order to RabbitMQ. The billing-app processes it asynchronously. If billing-app is offline, the message waits in the durable queue and is processed when the service restarts — **no orders are ever lost**.
+
+### Health Check
+```bash
+curl http://192.168.56.10:30000/health
+curl http://192.168.56.10:30000/ready
+```
+
+---
+
+## Cluster Management
+
+### Available Commands
+
+```bash
+./orchestrator.sh create   # Create VMs + deploy full cluster from scratch
+./orchestrator.sh start    # Resume suspended VMs + redeploy manifests
+./orchestrator.sh stop     # Delete resources + suspend VMs
+./orchestrator.sh status   # Show nodes, pods, and services
+./orchestrator.sh logs <pod-name>  # Stream logs for a specific pod
+```
+
+### Scaling
+
+HPA auto-scales api-gateway and inventory-app based on CPU:
+
+```bash
+# View current HPA state
+kubectl get hpa
+
+# Manual scale override (temporary)
+kubectl scale deployment api-gateway-app --replicas=3
+
+# Describe HPA events
+kubectl describe hpa api-gateway-app-hpa
+```
+
+### Stop and Restart Billing App (Resilience Demo)
+
+```bash
+# Stop billing-app
+kubectl scale statefulset billing-app --replicas=0
+
+# Start it back
+kubectl scale statefulset billing-app --replicas=1
+
+# Watch it recover and consume queued messages
+kubectl logs -f billing-app-0
+```
+
+### SSH Into Nodes
+
+```bash
+vagrant ssh master
+vagrant ssh agent
+```
+
+---
+
+## Database Access
+
+### Inventory Database (movies)
+
+```bash
+kubectl exec -it inventory-database-0 -- \
+  /usr/lib/postgresql/13/bin/psql -h localhost -U inventory_user -d movies
+```
+
+```sql
+\dt               -- list tables
+SELECT * FROM movies;
+\q                -- exit
+```
+
+### Billing Database (orders)
+
+```bash
+kubectl exec -it billing-database-0 -- \
+  /usr/lib/postgresql/13/bin/psql -h localhost -U billing_user -d orders
+```
+
+```sql
+\l                -- list databases (confirm "orders" exists)
+TABLE orders;     -- show all orders
+\q                -- exit
+```
+
+### One-liner queries (no interactive shell)
+
+```bash
+# Show all orders
+kubectl exec -it billing-database-0 -- \
+  /usr/lib/postgresql/13/bin/psql -h localhost -U billing_user -d orders \
+  -c "TABLE orders;"
+
+# Show all movies
+kubectl exec -it inventory-database-0 -- \
+  /usr/lib/postgresql/13/bin/psql -h localhost -U inventory_user -d movies \
+  -c "SELECT id, title FROM movies;"
+```
+
+---
+
+## Troubleshooting
+
+### Pods Not Starting
+
+```bash
+# Describe a failing pod
+kubectl describe pod <pod-name>
+
+# View previous crash logs
+kubectl logs <pod-name> --previous
+
+# Check all recent events
+kubectl get events --sort-by='.lastTimestamp'
+```
+
+### Common Issues
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `ImagePullBackOff` | Image not public on Docker Hub | Set image visibility to Public on hub.docker.com |
+| `CrashLoopBackOff` | App crashed on startup | Run `kubectl logs <pod> --previous` to see error |
+| `Pending` pod | Node out of memory/CPU | Run `kubectl describe node` and check `Conditions` |
+| `Evicted` pods | Node disk pressure | Run `vagrant ssh <node> -- df -h` to check disk |
+| HPA shows `<unknown>` CPU | metrics-server not ready | Wait 2–3 minutes after deploy |
+| Gateway returns 502 | inventory-app not reachable | Check `kubectl logs <gateway-pod>` for connection error |
+| Orders not appearing in DB | billing-app not consuming | Check `kubectl logs billing-app-0` for RabbitMQ connection |
+
+### Clean Up Evicted/Error Pods
+
+```bash
+kubectl get pods | grep Evicted | awk '{print $1}' | xargs kubectl delete pod
+kubectl get pods | grep Error | awk '{print $1}' | xargs kubectl delete pod
+```
+
+### Full Reset
+
+```bash
+./orchestrator.sh stop
+vagrant destroy -f
+./orchestrator.sh create
+```
+
+---
+
+## Security
+
+- **No hardcoded credentials** — all passwords stored in Kubernetes Secrets
+- **Base64 encoding** — all secret values encoded in `secrets.yaml`
+- **`.env` file** — excluded from Git via `.gitignore`, for local development only
+- **Specific image tags** — all images use `:1.0` tags, never `:latest`
+- **ClusterIP for internal services** — databases and apps are not exposed externally; only the API Gateway is exposed via NodePort
+
+---
+
+## Resources
+
+- [Kubernetes Documentation](https://kubernetes.io/docs/)
+- [K3s Quick Start](https://docs.k3s.io/quick-start)
+- [Vagrant Documentation](https://developer.hashicorp.com/vagrant/docs)
+- [RabbitMQ Tutorials](https://www.rabbitmq.com/tutorials)
+- [HPA Documentation](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/)
+- [StatefulSet Basics](https://kubernetes.io/docs/tutorials/stateful-application/basic-stateful-set/)
+
+---
+
+**Author:** Hussain Saddam  
+**Stack:** K3s · Python/Flask · PostgreSQL · RabbitMQ · Vagrant · VirtualBox  
+**Last Updated:** April 2026
