@@ -9,7 +9,8 @@ Scripts/k3s-node-token
 
 # Vagrant internal state and SSH keys
 .vagrant/
-
+AuditAnswers.md
+knowledge.md
 # Python
 __pycache__/
 *.py[cod]
@@ -22,6 +23,7 @@ venv/
 # OS
 .DS_Store
 Thumbs.db
+
 
 # IDEs
 .vscode/
