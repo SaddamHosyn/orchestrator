@@ -16,6 +16,15 @@ spec:
       labels:
         app: inventory-database
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - master
       containers:
         - name: inventory-database
           image: hussainsaddam/inventory-database:1.0
@@ -57,7 +66,6 @@ spec:
         resources:
           requests:
             storage: 1Gi
-
 ---
 # Headless Service for Inventory Database StatefulSet
 apiVersion: v1
@@ -66,7 +74,7 @@ metadata:
   name: inventory-database
   namespace: default
 spec:
-  clusterIP: None # Headless service for StatefulSet
+  clusterIP: None
   selector:
     app: inventory-database
   ports:

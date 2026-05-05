@@ -38,8 +38,6 @@ deploy_manifests() {
 
     # Apply secrets first
     kubectl apply -f "$MANIFESTS_DIR/secrets.yaml"
-
-    # Wait a bit for secrets to be created
     sleep 2
 
     # Apply database manifests
@@ -52,8 +50,6 @@ deploy_manifests() {
 
     # Apply RabbitMQ
     kubectl apply -f "$MANIFESTS_DIR/rabbitmq-deployment.yaml"
-
-    # Wait for RabbitMQ
     sleep 3
 
     # Apply app manifests
@@ -67,76 +63,100 @@ deploy_manifests() {
     log_info "All manifests deployed successfully!"
 }
 
-# Function to create the cluster
+# Wait for Kubernetes API to be reachable (up to 60 seconds)
+wait_for_api() {
+    log_info "Waiting for Kubernetes API to be ready..."
+    for i in {1..30}; do
+        if kubectl get nodes >/dev/null 2>&1; then
+            log_info "Kubernetes API is ready!"
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+    done
+    echo ""
+    log_error "Kubernetes API did not become ready in time."
+    log_error "Try './orchestrator.sh status' or './orchestrator.sh reset-agent' if the agent is broken."
+    return 1
+}
+
+# Function to create the cluster (first time only)
 create_cluster() {
     log_info "Creating K3s cluster with Vagrant..."
-    
-    # Check if Vagrant is installed
+
     if ! command -v vagrant &> /dev/null; then
         log_error "Vagrant is not installed. Please install Vagrant first."
         exit 1
     fi
-    
-    # Create the VMs
+
     cd "$SCRIPT_DIR"
     vagrant up
-    
+
     log_info "VMs created successfully!"
     log_info "Waiting for cluster to stabilize..."
     sleep 15
-    
+
     # Setup kubeconfig
     log_info "Setting up kubeconfig..."
     mkdir -p "$(dirname "$KUBECONFIG_PATH")"
-    
     vagrant ssh master -- sudo cat /etc/rancher/k3s/k3s.yaml > "$KUBECONFIG_PATH"
     sed -i '' 's/127.0.0.1/192.168.56.10/' "$KUBECONFIG_PATH"
-    
     chmod 600 "$KUBECONFIG_PATH"
     export KUBECONFIG="$KUBECONFIG_PATH"
-    
+
+    wait_for_api
+
     log_info "Verifying cluster nodes..."
     kubectl get nodes
-    
-    # Deploy all manifests
+
     deploy_manifests
 
-    echo "cluster created"
+    log_info "Cluster created successfully!"
+    log_info "Access the API Gateway at: http://192.168.56.10:30000"
 }
 
-# Function to start the cluster
+# Function to start the cluster (after a stop)
 start_cluster() {
     log_info "Starting K3s cluster..."
-    
-    # Start/resume VMs.
-    # NOTE: `vagrant resume` cannot update port forwarding rules, which can
-    # fail when host SSH ports collide. `vagrant up --no-provision` is safe
-    # for both "already running" and "suspended" states and allows auto-correct.
+
     cd "$SCRIPT_DIR"
-    vagrant up --no-provision
-    
-    log_info "Waiting for cluster to be ready..."
-    sleep 10
-    
-    # Setup kubeconfig if not exists
+
+    # If agent is aborted, stop and tell the user to reset it
+    if vagrant status agent 2>/dev/null | grep -q "aborted"; then
+        log_warning "Agent VM is in 'aborted' state."
+        log_warning "Run './orchestrator.sh reset-agent' to fix it, then run 'start' again."
+        exit 1
+    fi
+
+    # Boot VMs
+    # Note: vagrant up will only provision on first creation, not on subsequent boots
+    # This allows us to keep the fixed provisioning scripts while avoiding re-provisioning the master
+    vagrant up
+
+    # Restore kubeconfig if it was lost
     if [ ! -f "$KUBECONFIG_PATH" ]; then
+        log_info "Kubeconfig not found, fetching from master..."
         mkdir -p "$(dirname "$KUBECONFIG_PATH")"
         vagrant ssh master -- sudo cat /etc/rancher/k3s/k3s.yaml > "$KUBECONFIG_PATH"
         sed -i '' 's/127.0.0.1/192.168.56.10/' "$KUBECONFIG_PATH"
         chmod 600 "$KUBECONFIG_PATH"
     fi
-    
+
     export KUBECONFIG="$KUBECONFIG_PATH"
-    
-    # Deploy all manifests
-    deploy_manifests
-    
+
+    # Fix agent K3s networking if needed
+    log_info "Ensuring agent K3s networking is correct..."
+    vagrant ssh agent -- bash /home/vagrant/project/Scripts/fix-agent-k3s.sh || log_warning "Agent K3s fix script had issues, continuing anyway..."
+
+    # Wait for Kubernetes API to actually be up before showing status
+    wait_for_api
+
     log_info "Cluster started successfully!"
     log_info ""
-    log_info "Cluster Resources:"
-    kubectl get all -o wide
+    log_info "Nodes:"
+    kubectl get nodes
     log_info ""
-    log_info "Pods Status:"
+    log_info "Pods:"
     kubectl get pods -o wide
     log_info ""
     log_info "Services:"
@@ -146,36 +166,60 @@ start_cluster() {
 }
 
 # Function to stop the cluster
+# Uses vagrant halt (clean shutdown) — NOT vagrant suspend
+# suspend/resume is unreliable on VirtualBox and causes the master API
+# to be unreachable on the next start
 stop_cluster() {
     log_info "Stopping K3s cluster..."
-    
-    export KUBECONFIG="$KUBECONFIG_PATH"
-    
-    # Delete manifests
-    log_info "Deleting deployed resources..."
-    
-    if [ -d "$MANIFESTS_DIR" ]; then
-        kubectl delete -f "$MANIFESTS_DIR/" || true
-    fi
-    
-    log_info "Suspending VMs..."
-    
-    # Suspend VMs
+
     cd "$SCRIPT_DIR"
-    vagrant suspend
-    
+    vagrant halt
+
     log_info "Cluster stopped successfully!"
+    log_info "Run './orchestrator.sh start' to bring it back up."
+}
+
+# Function to reset only the agent VM
+# Use this when agent is stuck, aborted, or unresponsive
+reset_agent() {
+    log_warning "Resetting agent VM..."
+    log_warning "This will recreate the agent node."
+    log_warning "Database data stored on the agent (local-path PVs) will be lost."
+
+    cd "$SCRIPT_DIR"
+
+    vagrant destroy agent -f
+    vagrant up agent
+
+    if [ -f "$KUBECONFIG_PATH" ]; then
+        export KUBECONFIG="$KUBECONFIG_PATH"
+
+        log_info "Waiting for agent node to join the cluster..."
+        sleep 10
+
+        log_info "Current nodes:"
+        kubectl get nodes || true
+
+        log_info "Current pods:"
+        kubectl get pods -o wide || true
+    else
+        log_warning "Kubeconfig not found. Run './orchestrator.sh start' after reset."
+    fi
+
+    log_info "Agent reset completed!"
+    log_info "Run './orchestrator.sh redeploy' to re-apply manifests if pods are missing."
 }
 
 # Function to show cluster status
 status_cluster() {
     export KUBECONFIG="$KUBECONFIG_PATH"
-    
+
     if ! kubectl cluster-info &> /dev/null; then
-        log_warning "Cluster is not running or kubeconfig not configured"
+        log_warning "Cluster is not running or kubeconfig not configured."
+        log_warning "Run './orchestrator.sh start' to bring the cluster up."
         return 1
     fi
-    
+
     log_info "Cluster Status:"
     kubectl get nodes
     log_info ""
@@ -186,6 +230,22 @@ status_cluster() {
     kubectl get svc -o wide
 }
 
+# Function to redeploy all manifests without touching VMs
+redeploy_manifests() {
+    export KUBECONFIG="$KUBECONFIG_PATH"
+
+    if ! kubectl cluster-info &> /dev/null; then
+        log_error "Cluster is not running. Start it first with './orchestrator.sh start'"
+        exit 1
+    fi
+
+    deploy_manifests
+
+    log_info ""
+    log_info "Pods after redeploy:"
+    kubectl get pods -o wide
+}
+
 # Function to show logs
 show_logs() {
     local pod=$1
@@ -193,7 +253,7 @@ show_logs() {
         log_error "Please specify a pod name"
         exit 1
     fi
-    
+
     export KUBECONFIG="$KUBECONFIG_PATH"
     kubectl logs -f "$pod"
 }
@@ -212,17 +272,25 @@ case "$1" in
     status)
         status_cluster
         ;;
-    logs)
-        show_logs "$2"     # ./orchestrator.sh logs rabbitmq    
+    reset-agent)
+        reset_agent
         ;;
-    *)      # help if command wrong
-        echo "Usage: $0 {create|start|stop|status|logs <pod-name>}"
+    redeploy)
+        redeploy_manifests
+        ;;
+    logs)
+        show_logs "$2"
+        ;;
+    *)
+        echo "Usage: $0 {create|start|stop|status|reset-agent|redeploy|logs <pod-name>}"
         echo ""
         echo "Commands:"
-        echo "  create              - Create the K3s cluster with VMs"
-        echo "  start               - Start the cluster and deploy manifests"
-        echo "  stop                - Stop the cluster and delete resources"
+        echo "  create              - Create the K3s cluster with VMs (first time only)"
+        echo "  start               - Start the cluster after a stop"
+        echo "  stop                - Stop the cluster cleanly"
         echo "  status              - Show cluster status"
+        echo "  reset-agent         - Destroy and recreate only the agent VM"
+        echo "  redeploy            - Re-apply all manifests without touching VMs"
         echo "  logs <pod-name>     - Show logs for a specific pod"
         exit 1
         ;;
