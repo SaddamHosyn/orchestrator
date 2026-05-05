@@ -1,4 +1,4 @@
-# CRUD Master — K3s Kubernetes Microservices
+# Orchestrator — K3s Kubernetes Microservices
 
 A production-grade Kubernetes (K3s) cluster deploying six microservices across a two-node distributed system. This project demonstrates containerization, infrastructure-as-code, Kubernetes orchestration, auto-scaling, and message-driven resilience.
 
