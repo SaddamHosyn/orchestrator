@@ -213,9 +213,9 @@ case "$1" in
         status_cluster
         ;;
     logs)
-        show_logs "$2"
+        show_logs "$2"     # ./orchestrator.sh logs rabbitmq    
         ;;
-    *)
+    *)      # help if command wrong
         echo "Usage: $0 {create|start|stop|status|logs <pod-name>}"
         echo ""
         echo "Commands:"
