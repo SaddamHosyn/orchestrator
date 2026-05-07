@@ -15,9 +15,32 @@ spec:
       labels:
         app: inventory-app
     spec:
+      initContainers:
+        - name: wait-for-db
+          image: postgres:15-alpine
+          command:
+            - /bin/sh
+            - -c
+            - |
+              until pg_isready -h inventory-database -p 5432 -U inventory_user; do
+                echo "Waiting for inventory-database...";
+                sleep 3;
+              done;
+              PGPASSWORD=inventory_pass psql -h inventory-database -p 5432 -U inventory_user -d movies -c "
+                CREATE TABLE IF NOT EXISTS movies (
+                  id SERIAL PRIMARY KEY,
+                  title VARCHAR NOT NULL,
+                  description TEXT,
+                  genre VARCHAR,
+                  release_year INTEGER,
+                  rating FLOAT DEFAULT 0.0,
+                  duration INTEGER,
+                  available_copies INTEGER DEFAULT 0,
+                  created_at TIMESTAMP,
+                  updated_at TIMESTAMP
+                );"
       containers:
         - name: inventory-app
-          # Replace with your actual Docker Hub image
           image: hussainsaddam/inventory-app:1.0
           imagePullPolicy: IfNotPresent
           ports:
@@ -45,11 +68,11 @@ spec:
                   key: POSTGRES_PASSWORD
           resources:
             requests:
-              memory: "256Mi"
-              cpu: "100m"
+              memory: "128Mi"
+              cpu: "50m"
             limits:
-              memory: "512Mi"
-              cpu: "500m"
+              memory: "384Mi"
+              cpu: "300m"
           livenessProbe:
             httpGet:
               path: /health
@@ -62,9 +85,7 @@ spec:
               port: 8080
             initialDelaySeconds: 10
             periodSeconds: 5
-
 ---
-# Service for Inventory App
 apiVersion: v1
 kind: Service
 metadata:
