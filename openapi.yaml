@@ -22,7 +22,7 @@ info:
     - **Order Processing**: Asynchronous order creation via RabbitMQ
 
     ## Architecture
-    - API Gateway (Port 3000) serves as the single entry point
+    - API Gateway: Internal port 3000 (inside cluster) / External NodePort 30000 (from host)
     - HTTP proxy routes inventory requests to Inventory API (Port 8080)
     - Billing requests are published to RabbitMQ queue (async processing)
 
@@ -43,7 +43,7 @@ info:
 # Purpose: Lists all available API endpoints (development, staging, production)
 # Used by: API clients to know where to send requests
 servers:
-  - url: http://192.168.56.10:3000
+  - url: http://192.168.56.10:30000
     description: API Gateway (production - Vagrant VM)
   - url: http://localhost:3000
     description: API Gateway (local development)

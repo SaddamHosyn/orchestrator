@@ -20,7 +20,14 @@ fi
 chmod 700 "$DATA_DIR"
 chown postgres:postgres "$DATA_DIR"
 
-# Step 3: Initialize PostgreSQL cluster if needed
+# Step 3: Clean up stale lock files from crashed restarts
+if [ -f "$DATA_DIR/postmaster.pid" ]; then
+    echo "🧹 Cleaning up stale lock file..."
+    rm -f "$DATA_DIR/postmaster.pid"
+    rm -f "$DATA_DIR/postmaster.pid.lock"
+fi
+
+# Step 4: Initialize PostgreSQL cluster if needed
 if [ ! -f "$DATA_DIR/PG_VERSION" ]; then
     echo "🔧 Initializing PostgreSQL cluster..."
     rm -rf "$DATA_DIR"/*
